@@ -13,6 +13,15 @@ import (
 //go:embed web
 var embedded embed.FS
 
+// rootFiles are the icon and manifest files served straight from the site root.
+var rootFiles = map[string]string{
+	"icon.svg":             "image/svg+xml",
+	"apple-touch-icon.png": "image/png",
+	"icon-192.png":         "image/png",
+	"icon-512.png":         "image/png",
+	"manifest.webmanifest": "application/manifest+json",
+}
+
 func siteFS() fs.FS {
 	site, err := fs.Sub(embedded, "web")
 	if err != nil {
@@ -33,6 +42,14 @@ func registerStatic(mux *http.ServeMux, site fs.FS) {
 		w.Header().Set("Cache-Control", "no-cache")
 		servePage(w, page)
 	})
+	for name, ctype := range rootFiles {
+		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", ctype)
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", `"`+version+`"`)
+			http.ServeFileFS(w, r, site, name)
+		})
+	}
 	for _, dir := range []string{"js", "vendor"} {
 		mux.HandleFunc("GET /"+dir+"/{file}", func(w http.ResponseWriter, r *http.Request) {
 			name := r.PathValue("file")
