@@ -1,4 +1,4 @@
-// Minimal HTTP service. Every homie-pipeline app starts from this.
+// Knight School: a static chess web app (web/) served by the homie-pipeline app-template service.
 package main
 
 import (
@@ -22,9 +22,7 @@ func appName() string {
 
 func newMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"app": appName(), "message": "hello"})
-	})
+	registerStatic(mux, siteFS()) // the Knight School page and its files (web.go)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

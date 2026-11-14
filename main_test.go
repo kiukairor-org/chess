@@ -20,14 +20,6 @@ func get(t *testing.T, path string) (*httptest.ResponseRecorder, map[string]stri
 	return rec, body
 }
 
-func TestRoot(t *testing.T) {
-	t.Setenv("APP_NAME", "demo")
-	rec, body := get(t, "/")
-	if rec.Code != http.StatusOK || body["app"] != "demo" || body["message"] != "hello" {
-		t.Fatalf("got %d %v", rec.Code, body)
-	}
-}
-
 func TestHealthz(t *testing.T) {
 	rec, body := get(t, "/healthz")
 	if rec.Code != http.StatusOK || body["status"] != "ok" {
