@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"image/png"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -145,6 +148,88 @@ func TestEmbeddedPage(t *testing.T) {
 		if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
 			t.Errorf("/%s: got %d, %d bytes", m[1], rec.Code, rec.Body.Len())
 		}
+	}
+}
+
+// The icon, PNGs and manifest are served from the root with the right types, the page links them, and the
+// manifest lists icons that exist at the sizes it claims.
+func TestIconsAndManifest(t *testing.T) {
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	for path, ctype := range rootFiles {
+		rec := get("/" + path)
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != ctype || rec.Body.Len() == 0 {
+			t.Errorf("%s: got %d %q, want 200 %q", path, rec.Code, rec.Header().Get("Content-Type"), ctype)
+		}
+	}
+	if len(rootFiles) != 5 {
+		t.Errorf("expected svg, three PNGs and the manifest, got %d files", len(rootFiles))
+	}
+	page := get("/").Body.String()
+	for _, want := range []string{
+		`<link rel="icon" type="image/svg+xml" href="/icon.svg">`,
+		`<link rel="apple-touch-icon" href="/apple-touch-icon.png">`,
+		`<link rel="manifest" href="/manifest.webmanifest">`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page head lacks %s", want)
+		}
+	}
+	var m struct {
+		Name  string `json:"name"`
+		Icons []struct {
+			Src, Sizes, Type string
+		} `json:"icons"`
+	}
+	if err := json.Unmarshal(get("/manifest.webmanifest").Body.Bytes(), &m); err != nil || m.Name != "Knight School" {
+		t.Fatalf("manifest: %v, name %q", err, m.Name)
+	}
+	seen := map[string]bool{}
+	for _, ic := range m.Icons {
+		rec := get(ic.Src)
+		if rec.Code != http.StatusOK {
+			t.Errorf("manifest icon %s: got %d", ic.Src, rec.Code)
+			continue
+		}
+		seen[ic.Sizes] = true
+		if ic.Type == "image/png" {
+			cfg, err := png.DecodeConfig(rec.Body)
+			if err != nil || ic.Sizes != fmt.Sprintf("%dx%d", cfg.Width, cfg.Height) {
+				t.Errorf("%s: sizes %q but decoded %v (%v)", ic.Src, ic.Sizes, cfg, err)
+			}
+		}
+	}
+	if !seen["192x192"] || !seen["512x512"] {
+		t.Errorf("manifest must list 192 and 512 icons, got %v", seen)
+	}
+	cfg, err := png.DecodeConfig(get("/apple-touch-icon.png").Body)
+	if err != nil || cfg.Width != 180 || cfg.Height != 180 {
+		t.Errorf("apple-touch-icon: %v %v, want 180x180", cfg, err)
+	}
+}
+
+// At 16px the knight must still show: sampled on a 16x16 grid, the cream silhouette covers a good share.
+func TestIconIsLegibleSmall(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/icon-192.png", nil))
+	img, err := png.Decode(rec.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cream := 0
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			r, g, b, _ := img.At(x*12+6, y*12+6).RGBA()
+			if r>>8 > 0xB0 && g>>8 > 0xB0 && b>>8 > 0x90 {
+				cream++
+			}
+		}
+	}
+	if cream < 40 || cream > 160 {
+		t.Errorf("%d of 256 sampled pixels are knight, want 40..160", cream)
 	}
 }
 
