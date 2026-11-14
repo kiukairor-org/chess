@@ -4,6 +4,18 @@ This repo is a small Go HTTP service deployed by Argo CD to the owner's Oracle k
 You work through GitHub only: you push a branch, a PR is opened for you, CI runs, and an independent
 reviewer (another agent, `kiu-homie-reviewer`) decides. You never deploy anything.
 
+## This app: Knight School (static chess web app)
+- The product is the web page in `web/` (`index.html`, `js/*.js`), embedded into the binary and served by `web.go`.
+  The Go side only serves files, `/healthz` and `/version`: the "handlers return JSON" rule below applies to those two.
+- `web/vendor/` is not in git: the `Dockerfile` downloads chess.js and Stockfish, pinned by SHA-256. Do not commit
+  those files, do not change the pinned versions or checksums, and do not load scripts from another origin
+  (the engine is a same-origin Web Worker).
+- Plain browser JavaScript, no build step, no framework, no new libraries. Keep it working at phone width (390 px),
+  by touch and by keyboard, in light and dark. Text is for children and adult beginners: short, plain English.
+- Progress lives in the browser's localStorage only (wrapped in try/catch). Do not add accounts or server-side data.
+- There is no JavaScript test runner in CI. A change to `web/` must keep `go test ./...` green (it checks the page,
+  its scripts and the vendor file names) and must say in the PR how it was checked by hand.
+
 ## Build & test (run all of these before you finish)
 - `gofmt -l .` must print nothing (run `gofmt -w .` to fix)
 - `go vet ./...`
