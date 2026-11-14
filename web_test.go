@@ -130,6 +130,11 @@ func TestEmbeddedPage(t *testing.T) {
 		!strings.Contains(page, `<meta name="viewport"`) {
 		t.Fatalf("not the Knight School document: %.120q", page)
 	}
+	// The views are switched with the `hidden` attribute while their CSS sets `display`: without this base rule
+	// every view and the lesson-finish panel show at once.
+	if !strings.Contains(page, "[hidden]{display:none!important}") {
+		t.Fatal("the page lost its [hidden] base rule")
+	}
 	scripts := regexp.MustCompile(`<script src="(js/[^"]+)"`).FindAllStringSubmatch(page, -1)
 	if len(scripts) < 4 {
 		t.Fatalf("expected the app scripts in the page, found %v", scripts)
