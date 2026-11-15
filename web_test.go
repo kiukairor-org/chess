@@ -151,6 +151,37 @@ func TestEmbeddedPage(t *testing.T) {
 	}
 }
 
+// Play-mode hints are capped per game, the count is saved with the game and shown on the button; lesson hints
+// stay unlimited. (No JS runner in CI, so this pins the wiring in the shipped script and page.)
+func TestPlayHintLimit(t *testing.T) {
+	get := func(path string) string {
+		rec := httptest.NewRecorder()
+		newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Body.String()
+	}
+	js, page := get("/js/app.js"), get("/")
+	for _, want := range []string{
+		"var MAX_HINTS = 3;",
+		"hints: this.hintsLeft",                       // saved with the game in progress
+		"this.hintsLeft = g.hints;",                   // restored on resume
+		"this.hintsLeft = MAX_HINTS;",                 // reset by a new game
+		"this.thinking || this.hintsLeft < 1;",        // disabled at 0
+		"'Hint (' + this.hintsLeft + ' left)'",        // label
+		"if (this.hintsLeft < 1 || this.hintPending)", // showHint refuses at 0
+		"self.hintsLeft--;",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("app.js lost %q", want)
+		}
+	}
+	if !strings.Contains(page, `id="playHint">Hint (3 left)</button>`) {
+		t.Error("play hint button does not show the remaining hints")
+	}
+	if !strings.Contains(page, `id="lsnHint">Hint</button>`) || !strings.Contains(js, "$('lsnHint').disabled = this.solved;") {
+		t.Error("lesson hint button must stay unlimited")
+	}
+}
+
 // The icon, PNGs and manifest are served from the root with the right types, the page links them, and the
 // manifest lists icons that exist at the sizes it claims.
 func TestIconsAndManifest(t *testing.T) {

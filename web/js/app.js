@@ -521,8 +521,10 @@
   ];
   function tierOf(level) { for (var i = 0; i < TIERS.length; i++) if (level <= TIERS[i][0]) return TIERS[i]; return TIERS[TIERS.length - 1]; }
 
+  var MAX_HINTS = 3; // computer hints per game (lesson hints are not limited)
+
   var Play = {
-    board: null, game: null, color: 'w', level: 1, thinking: false, token: 0, started: false, hint: [], lastMove: null, resultShown: false,
+    board: null, game: null, color: 'w', level: 1, thinking: false, token: 0, started: false, hint: [], hintsLeft: 3, hintPending: false, lastMove: null, resultShown: false,
     init: function () {
       var self = this;
       this.level = Store.data.level; this.color = Store.data.color;
@@ -535,7 +537,8 @@
       // restore a saved game
       var g = Store.data.game;
       if (g && Array.isArray(g.moves)) {
-        try { g.moves.forEach(function (san) { if (!self.game.move(san)) throw new Error('bad move'); }); } catch (e) { this.game = new Chess(); }
+        try { g.moves.forEach(function (san) { if (!self.game.move(san)) throw new Error('bad move'); }); } catch (e) { this.game = new Chess(); g = null; }
+        if (g && g.hints >= 0 && g.hints <= MAX_HINTS && g.hints === (g.hints | 0)) this.hintsLeft = g.hints;
       }
       $('levelRange').value = this.level;
       $('levelRange').addEventListener('input', function () { self.setLevel(+this.value); });
@@ -578,9 +581,9 @@
       this.color = c; Store.data.color = c; Store.save();
       this.newGame();
     },
-    persist: function () { Store.data.game = { moves: this.game.history() }; Store.save(); },
+    persist: function () { Store.data.game = { moves: this.game.history(), hints: this.hintsLeft }; Store.save(); },
     newGame: function () {
-      this.token++; this.thinking = false; this.hint = []; this.lastMove = null; this.resultShown = false;
+      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
       this.game = new Chess();
       this.board.setOrientation(this.color);
       this.persist(); this.draw();
@@ -595,6 +598,7 @@
       var over = g.game_over(), mine = g.turn() === this.color, st = $('playStatus');
       var sub = 'You play ' + (this.color === 'w' ? 'White' : 'Black') + ' against level ' + this.level;
       var head = over ? 'Game over' : (this.thinking || !mine ? 'The computer is thinking…' : (g.in_check() ? 'Check! Your move' : 'Your move'));
+      if (!over && this.hintsLeft < 1) sub += '. No hints left in this game';
       st.textContent = head; st.appendChild(el('small', null, sub));
       // result
       var res = $('playResult');
@@ -616,7 +620,9 @@
       // buttons
       var plies = hist.length;
       $('playUndo').disabled = this.color === 'w' ? plies < 1 : plies < 2;
-      $('playHint').disabled = over || !mine || this.thinking;
+      $('playHint').disabled = over || !mine || this.thinking || this.hintsLeft < 1;
+      $('playHint').textContent = 'Hint (' + this.hintsLeft + ' left)';
+      $('playHint').title = this.hintsLeft < 1 ? 'You used all ' + MAX_HINTS + ' hints in this game. Start a new game for more.' : '';
       // move list
       var list = $('moveList'), sans = g.history(); list.innerHTML = '';
       for (var i = 0; i < sans.length; i += 2) {
@@ -683,12 +689,16 @@
     },
     showHint: function () {
       var self = this, tok = this.token, fen = this.game.fen();
+      if (this.hintsLeft < 1 || this.hintPending) return;
+      this.hintPending = true;
       $('playHint').disabled = true;
       Engine.hint(fen).then(function (u) {
-        if (tok !== self.token || self.game.fen() !== fen || !u) return;
+        self.hintPending = false;
+        if (tok !== self.token || self.game.fen() !== fen || !u) { self.draw(); return; }
+        self.hintsLeft--; self.persist();
         self.hint = [u.slice(0, 2), u.slice(2, 4)];
         self.draw();
-      });
+      }, function () { self.hintPending = false; self.draw(); });
     }
   };
 
