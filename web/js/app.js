@@ -13,19 +13,33 @@
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
 
   /* ---------------- saved progress (this device only) ---------------- */
-  var KEY = 'knight-school-v1';
-  var Store = {
-    data: { stars: {}, level: 1, color: 'w', best: 0, game: null },
+  /* Storage interface: load() -> {profiles, legacy} (saved text or null), save(text) -> true if it was written.
+     Profiles live behind this so a backend (database, accounts) can replace localStorage later. */
+  var KEY = 'knight-school-profiles-v2', OLD_KEY = 'knight-school-v1';
+  var LocalBackend = {
     load: function () {
-      try {
-        var raw = localStorage.getItem(KEY);
-        if (raw) { var d = JSON.parse(raw); if (d && typeof d === 'object') for (var k in this.data) if (k in d) this.data[k] = d[k]; }
-      } catch (e) {}
-      if (!this.data.stars || typeof this.data.stars !== 'object') this.data.stars = {};
-      this.data.level = Math.max(1, Math.min(100, parseInt(this.data.level, 10) || 1));
-      if (this.data.color !== 'b') this.data.color = 'w';
+      var out = { profiles: null, legacy: null };
+      try { out.profiles = localStorage.getItem(KEY); out.legacy = localStorage.getItem(OLD_KEY); } catch (e) {}
+      return out;
     },
-    save: function () { try { localStorage.setItem(KEY, JSON.stringify(this.data)); } catch (e) {} }
+    save: function (text) { try { localStorage.setItem(KEY, text); return true; } catch (e) { return false; } }
+  };
+  function safeParse(t) { try { return JSON.parse(t); } catch (e) { return null; } }
+  /* Store.data is always the active profile's progress: { stars, level, color, best, game }. */
+  var Store = {
+    backend: LocalBackend, doc: null, data: null,
+    load: function () {
+      var saved = this.backend.load();
+      this.doc = Profiles.load(saved.profiles, saved.legacy);
+      this.data = Profiles.active(this.doc).data;
+      if (JSON.stringify(this.doc) !== JSON.stringify(safeParse(saved.profiles))) this.save(); // first run, migrated or repaired
+    },
+    save: function () { return this.backend.save(JSON.stringify(this.doc)); },
+    profile: function () { return Profiles.active(this.doc); },
+    switchTo: function (id) {
+      if (!Profiles.find(this.doc, id)) return;
+      this.doc.active = id; this.data = Profiles.active(this.doc).data; this.save();
+    }
   };
 
   /* ---------------- the board ---------------- */
@@ -527,19 +541,12 @@
     board: null, game: null, color: 'w', level: 1, thinking: false, token: 0, started: false, hint: [], hintsLeft: 3, hintPending: false, lastMove: null, resultShown: false,
     init: function () {
       var self = this;
-      this.level = Store.data.level; this.color = Store.data.color;
-      this.game = new Chess();
       this.board = new Board($('playBoard'), {
         canSelect: function (s) { var p = self.game.get(s); return !self.thinking && !self.game.game_over() && self.game.turn() === self.color && p && p.color === self.color; },
         dests: function (s) { return destsOf(self.game, s); },
         onMove: function (a, b) { self.human(a, b); }
       });
-      // restore a saved game
-      var g = Store.data.game;
-      if (g && Array.isArray(g.moves)) {
-        try { g.moves.forEach(function (san) { if (!self.game.move(san)) throw new Error('bad move'); }); } catch (e) { this.game = new Chess(); g = null; }
-        if (g && g.hints >= 0 && g.hints <= MAX_HINTS && g.hints === (g.hints | 0)) this.hintsLeft = g.hints;
-      }
+      this.restore();
       $('levelRange').value = this.level;
       $('levelRange').addEventListener('input', function () { self.setLevel(+this.value); });
       $('levelDown').addEventListener('click', function () { self.setLevel(self.level - 1); });
@@ -551,6 +558,20 @@
       $('playHint').addEventListener('click', function () { self.showHint(); });
       Engine.onChange(function () { self.engineNote(); });
       this.engineNote();
+      this.levelUi();
+    },
+    /* (Re)load level, colour and the saved game from the active profile; also used when switching profiles. */
+    restore: function () {
+      var self = this;
+      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
+      this.level = Store.data.level; this.color = Store.data.color;
+      this.game = new Chess();
+      var g = Store.data.game;
+      if (g && Array.isArray(g.moves)) {
+        try { g.moves.forEach(function (san) { if (!self.game.move(san)) throw new Error('bad move'); }); } catch (e) { this.game = new Chess(); g = null; }
+        if (g && g.hints >= 0 && g.hints <= MAX_HINTS && g.hints === (g.hints | 0)) this.hintsLeft = g.hints;
+      }
+      this.board.setOrientation(this.color);
       this.levelUi();
     },
     enter: function () {
@@ -702,10 +723,172 @@
     }
   };
 
+  /* ---------------- who's playing: pick, create, edit, export, import ---------------- */
+  var Who = {
+    dlg: null, mode: 'list', editId: null, confirmDelete: false, msg: null, code: '',
+    init: function () {
+      var self = this;
+      this.dlg = $('profileDlg');
+      $('profileBtn').addEventListener('click', function () { self.open(); });
+      this.dlg.addEventListener('click', function (e) { if (e.target === self.dlg) self.close(); }); // click on the backdrop
+      this.paintButton();
+    },
+    paintButton: function () {
+      var p = Store.profile();
+      $('profileAvatar').textContent = p.avatar; $('profileName').textContent = p.name;
+      $('profileBtn').setAttribute('aria-label', 'Who is playing: ' + p.name + '. Change player');
+    },
+    open: function () {
+      this.go('list');
+      if (this.dlg.showModal) { if (!this.dlg.open) this.dlg.showModal(); } else this.dlg.setAttribute('open', '');
+    },
+    close: function () {
+      if (this.dlg.close) this.dlg.close(); else this.dlg.removeAttribute('open');
+      try { $('profileBtn').focus(); } catch (e) {}
+    },
+    go: function (mode, id, msg) {
+      this.mode = mode; this.editId = id || null; this.confirmDelete = false; this.msg = msg || null;
+      this.render();
+    },
+    note: function (parent) {
+      if (!this.msg) return;
+      var n = el('div', 'p-fb ' + this.msg.kind, this.msg.text); n.setAttribute('role', this.msg.kind === 'bad' ? 'alert' : 'status'); parent.appendChild(n);
+    },
+    button: function (parent, label, cls, fn) {
+      var b = el('button', 'btn' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.addEventListener('click', fn); parent.appendChild(b); return b;
+    },
+    render: function () {
+      var d = this.dlg, self = this;
+      d.innerHTML = '';
+      var box = el('div', 'dlgbox'); d.appendChild(box);
+      var focus = null;
+      if (this.mode === 'list') {
+        box.appendChild(el('h2', null, 'Who’s playing?'));
+        var list = el('div', 'profs');
+        Store.doc.profiles.forEach(function (p) {
+          var row = el('div', 'prof' + (p.id === Store.doc.active ? ' on' : ''));
+          var pick = el('button', 'pick'); pick.type = 'button';
+          var n = 0; for (var k in p.data.stars) n += p.data.stars[k];
+          pick.appendChild(el('span', 'av', p.avatar)); pick.appendChild(el('span', 'nm', p.name));
+          pick.appendChild(el('small', null, n + (n === 1 ? ' star' : ' stars') + ', level ' + p.data.level + (p.id === Store.doc.active ? ', playing now' : '')));
+          pick.addEventListener('click', function () { self.choose(p.id); });
+          row.appendChild(pick);
+          var ed = el('button', 'btn small', 'Edit'); ed.type = 'button'; ed.setAttribute('aria-label', 'Edit ' + p.name);
+          ed.addEventListener('click', function () { self.go('edit', p.id); });
+          row.appendChild(ed); list.appendChild(row);
+          if (p.id === Store.doc.active) focus = pick;
+        });
+        box.appendChild(list);
+        this.note(box);
+        var r = el('div', 'row'); box.appendChild(r);
+        if (Store.doc.profiles.length < Profiles.MAX_PROFILES) this.button(r, 'New player', 'primary', function () { self.go('edit', null); });
+        this.button(r, 'Import a profile', '', function () { self.go('import'); });
+        this.button(r, 'Close', '', function () { self.close(); });
+      } else if (this.mode === 'edit') {
+        var p = this.editId ? Profiles.find(Store.doc, this.editId) : null, avatar = p ? p.avatar : Profiles.AVATARS[Store.doc.profiles.length % Profiles.AVATARS.length];
+        box.appendChild(el('h2', null, p ? 'Edit player' : 'New player'));
+        var lab = el('label', 'fld', 'Name'); var inp = el('input'); inp.type = 'text'; inp.maxLength = Profiles.MAX_NAME; inp.value = p ? p.name : ''; inp.id = 'profName'; inp.autocomplete = 'off';
+        lab.appendChild(inp); box.appendChild(lab); focus = inp;
+        box.appendChild(el('div', 'fld', 'Picture'));
+        var av = el('div', 'avs'); av.setAttribute('role', 'group'); av.setAttribute('aria-label', 'Picture');
+        Profiles.AVATARS.forEach(function (a) {
+          var b = el('button', null, a); b.type = 'button'; b.setAttribute('aria-pressed', a === avatar);
+          b.addEventListener('click', function () { avatar = a; Array.prototype.forEach.call(av.children, function (c) { c.setAttribute('aria-pressed', c === b); }); });
+          av.appendChild(b);
+        });
+        box.appendChild(av);
+        this.note(box);
+        var save = function () {
+          try {
+            if (p) { Profiles.rename(Store.doc, p.id, inp.value, avatar); Store.save(); self.after(false); self.go('list', null, { kind: 'good', text: 'Saved.' }); }
+            else { var np = Profiles.add(Store.doc, inp.value || 'Player', avatar); Store.save(); self.choose(np.id); }
+          } catch (e) { self.go('edit', self.editId, { kind: 'bad', text: e.message }); }
+        };
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+        var r2 = el('div', 'row'); box.appendChild(r2);
+        this.button(r2, p ? 'Save' : 'Create player', 'primary', save);
+        if (p) this.button(r2, 'Export', '', function () { self.code = Profiles.exportCode(p); self.go('export', p.id); });
+        this.button(r2, 'Back', '', function () { self.go('list'); });
+        if (p && Store.doc.profiles.length > 1) {
+          var r3 = el('div', 'row danger'); box.appendChild(r3);
+          if (!this.confirmDelete) this.button(r3, 'Delete player…', '', function () { self.confirmDelete = true; self.render(); });
+          else {
+            r3.appendChild(el('p', null, 'Delete ' + p.name + ' and all their stars? This cannot be undone. Export first to keep a copy.'));
+            this.button(r3, 'Yes, delete ' + p.name, 'bad', function () {
+              var wasActive = p.id === Store.doc.active;
+              try { Profiles.remove(Store.doc, p.id); } catch (e) { self.go('list', null, { kind: 'bad', text: e.message }); return; }
+              if (wasActive) Store.switchTo(Store.doc.active); else Store.save();
+              self.after(wasActive); self.go('list', null, { kind: 'good', text: 'Deleted.' });
+            });
+            this.button(r3, 'No, keep', '', function () { self.confirmDelete = false; self.render(); });
+          }
+        }
+      } else if (this.mode === 'export') {
+        var q = Profiles.find(Store.doc, this.editId);
+        box.appendChild(el('h2', null, 'Export ' + (q ? q.name : '')));
+        box.appendChild(el('p', null, 'This code holds the stars, level and game. Copy it or save it as a file, then use “Import a profile” on the other device.'));
+        var ta = el('textarea'); ta.readOnly = true; ta.rows = 5; ta.value = this.code; ta.setAttribute('aria-label', 'Profile code'); box.appendChild(ta);
+        this.note(box);
+        var r4 = el('div', 'row'); box.appendChild(r4);
+        this.button(r4, 'Copy code', 'primary', function () {
+          ta.select();
+          var done = function () { self.msg = { kind: 'good', text: 'Copied.' }; self.render(); };
+          var fail = function () { self.msg = { kind: 'note', text: 'Select the code and copy it.' }; self.render(); };
+          try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(self.code).then(done, fail); else fail(); } catch (e) { fail(); }
+        });
+        this.button(r4, 'Save as file', '', function () {
+          try {
+            var a = document.createElement('a'), url = URL.createObjectURL(new Blob([self.code], { type: 'text/plain' }));
+            a.href = url; a.download = 'knight-school-' + (q ? q.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') : 'profile').toLowerCase() + '.txt';
+            document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+          } catch (e) { self.msg = { kind: 'bad', text: 'Could not save a file here. Copy the code instead.' }; self.render(); }
+        });
+        this.button(r4, 'Back', '', function () { self.go('edit', self.editId); });
+        focus = ta;
+      } else { // import
+        box.appendChild(el('h2', null, 'Import a profile'));
+        box.appendChild(el('p', null, 'Paste a code from another device, or choose a saved file. It is added as a new player; nobody is replaced.'));
+        var ta2 = el('textarea'); ta2.rows = 5; ta2.value = this.code; ta2.setAttribute('aria-label', 'Profile code'); ta2.placeholder = 'KS1.…'; box.appendChild(ta2); focus = ta2;
+        var file = el('input'); file.type = 'file'; file.accept = '.txt,text/plain'; file.setAttribute('aria-label', 'Choose a profile file');
+        file.addEventListener('change', function () {
+          var f = file.files && file.files[0]; if (!f) return;
+          if (f.size > 100000) { self.code = ''; self.go('import', null, { kind: 'bad', text: 'That file is too big to be a profile.' }); return; }
+          var rd = new FileReader();
+          rd.onload = function () { self.code = String(rd.result || ''); self.go('import'); };
+          rd.onerror = function () { self.go('import', null, { kind: 'bad', text: 'Could not read that file.' }); };
+          rd.readAsText(f);
+        });
+        box.appendChild(file);
+        this.note(box);
+        var r5 = el('div', 'row'); box.appendChild(r5);
+        this.button(r5, 'Import', 'primary', function () {
+          self.code = ta2.value;
+          try { var np = Profiles.importCode(Store.doc, ta2.value); Store.save(); self.code = ''; self.go('list', null, { kind: 'good', text: 'Added ' + np.name + '. Tap their name to play as them.' }); }
+          catch (e) { self.go('import', null, { kind: 'bad', text: e.message }); }
+        });
+        this.button(r5, 'Back', '', function () { self.code = ''; self.go('list'); });
+      }
+      if (focus) { try { focus.focus(); } catch (e) {} }
+    },
+    /* Make a profile the one being played, and refresh whatever shows its progress. */
+    choose: function (id) {
+      var changed = id !== Store.doc.active;
+      if (changed) Store.switchTo(id); else Store.save();
+      this.after(changed); this.close();
+    },
+    after: function (changed) {
+      this.paintButton();
+      if (!changed) { renderHome(); return; }
+      Play.restore();
+      show(current === 'lesson' ? 'home' : current);
+    }
+  };
+
   /* ---------------- start ---------------- */
   Store.load();
   Lesson.init();
   Play.init();
+  Who.init();
   $('brand').addEventListener('click', function () { show('home'); });
   $('navLearn').addEventListener('click', function () { show('learn'); });
   $('navPlay').addEventListener('click', function () { show('play'); });
