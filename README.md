@@ -21,6 +21,21 @@ Tailnet only: **https://chess.tail8e3e5b.ts.net** (previews: `https://pr-<n>-che
 | `Dockerfile`, `deploy/` | arm64 image (distroless, non-root); kustomize base, Argo CD sets namespace, image tag and hostname |
 | `CLAUDE.md`, `.github/` | pipeline rules and workflows, unchanged from `app-template` apart from the "This app" section |
 
+## Players (profiles)
+"Who's playing?" (top right) lets several people share a device: each profile has a name, a picture, its own stars,
+level, colour and game in progress. Saved in localStorage under `knight-school-profiles-v2` as a versioned document
+(`{ v: 2, active, profiles: [{ id, name, avatar, data }] }`, ids are stable). On first load the old single set of
+progress (`knight-school-v1`, left in place) becomes the first profile. A profile is exported as a text code or file
+(`KS1.` + base64url JSON) and imported on another device as a new player; invalid codes are rejected without touching
+anything. `web/js/profiles.js` holds the data rules (no DOM); `app.js` reaches storage only through `Store.backend`
+(`load()` / `save(text)`), so a server can replace `LocalBackend` without changing the rest.
+
+### Mid-term plan: a real backend
+The owner wants proper accounts and storage later: a **database** behind an HTTP API (profiles, stars, games), written
+in a language New Relic instruments easily. The plan is to stay with **Go + OpenTelemetry** (already used here, D81)
+and add a `Backend` that talks to that API in place of `LocalBackend`; export/import then doubles as the way to move
+local progress into an account. Not built yet: the server stays stateless today.
+
 ## Levels
 - 1–30: Stockfish scores every legal move at depth 1–3, then one is drawn at random, better moves being likelier.
   Level 1 plays a purely random move 90% of the time; that share falls to zero by level 25.
