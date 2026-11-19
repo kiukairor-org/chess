@@ -5,6 +5,7 @@
   var DOC_VERSION = 2;          // the saved document: { v, active, profiles: [{ id, name, avatar, data }] }
   var CODE_PREFIX = 'KS1.';     // export code: prefix + base64url(JSON)
   var FORMAT = 'knight-school-profile';
+  var HINTS_PER_GAME = 10, OLD_HINTS_PER_GAME = 3; // computer hints per game; games saved before the change have no `lim`
   var MAX_PROFILES = 12, MAX_NAME = 20, MAX_CODE = 60000, MAX_MOVES = 1000;
   var AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐙', '🦄', '🐢', '🚀', '⚽', '🌈'];
 
@@ -27,9 +28,15 @@
     out.best = int(d.best, 0, 100, 0);
     var g = d.game;
     if (isObj(g) && Array.isArray(g.moves) && g.moves.length <= MAX_MOVES && g.moves.every(function (m) { return typeof m === 'string' && m.length <= 10; })) {
-      out.game = { moves: g.moves.slice(), hints: int(g.hints, 0, 3, 3) };
+      out.game = { moves: g.moves.slice(), hints: gameHints(g), lim: HINTS_PER_GAME };
     }
     return out;
+  }
+
+  /* `hints` is how many are left. Games saved with the old limit of 3 have no `lim`: keep the hints they already used. */
+  function gameHints(g) {
+    if (g.lim === HINTS_PER_GAME) return int(g.hints, 0, HINTS_PER_GAME, HINTS_PER_GAME);
+    return HINTS_PER_GAME - (OLD_HINTS_PER_GAME - int(g.hints, 0, OLD_HINTS_PER_GAME, OLD_HINTS_PER_GAME));
   }
 
   /* Strict: the problem with imported data in plain English, or '' when it is fine. */
@@ -43,7 +50,7 @@
     if (d.game !== null && d.game !== undefined) {
       var g = d.game;
       if (!isObj(g) || !Array.isArray(g.moves) || g.moves.length > MAX_MOVES || !g.moves.every(function (m) { return typeof m === 'string' && m.length <= 10; })) return 'The game in it is not valid.';
-      if (parseInt(g.hints, 10) !== g.hints || g.hints < 0 || g.hints > 3) return 'The game in it is not valid.';
+      if (parseInt(g.hints, 10) !== g.hints || g.hints < 0 || g.hints > (g.lim === HINTS_PER_GAME ? HINTS_PER_GAME : OLD_HINTS_PER_GAME)) return 'The game in it is not valid.';
     }
     return '';
   }
@@ -120,7 +127,7 @@
   }
 
   root.Profiles = {
-    DOC_VERSION: DOC_VERSION, MAX_PROFILES: MAX_PROFILES, MAX_NAME: MAX_NAME, AVATARS: AVATARS,
+    DOC_VERSION: DOC_VERSION, MAX_PROFILES: MAX_PROFILES, MAX_NAME: MAX_NAME, HINTS_PER_GAME: HINTS_PER_GAME, AVATARS: AVATARS,
     emptyData: emptyData, cleanData: cleanData, load: load, find: find, active: active,
     add: add, rename: rename, remove: remove, exportCode: exportCode, importCode: importCode
   };

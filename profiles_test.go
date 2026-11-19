@@ -19,10 +19,25 @@ func TestProfilesLogic(t *testing.T) {
 	if out, err := exec.Command(node, "testdata/profiles_check.js", "web/js/profiles.js").CombinedOutput(); err != nil {
 		t.Fatalf("profiles_check.js failed: %v\n%s", err, out)
 	}
-	for _, f := range []string{"web/js/app.js", "web/js/profiles.js"} { // the scripts at least parse
+	for _, f := range []string{"web/js/app.js", "web/js/profiles.js", "web/js/strategy.js"} { // the scripts at least parse
 		if out, err := exec.Command(node, "--check", f).CombinedOutput(); err != nil {
 			t.Errorf("%s does not parse: %v\n%s", f, err, out)
 		}
+	}
+}
+
+// The strategy named by a play-mode hint is checked by running testdata/strategy_check.js under Node against the
+// real chess.js. web/vendor is not in git (the Dockerfile downloads it), so this is skipped where it is missing.
+func TestStrategyHints(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	if _, err := os.Stat("web/vendor/chess.js"); err != nil {
+		t.Skip("web/vendor/chess.js is not downloaded")
+	}
+	if out, err := exec.Command(node, "testdata/strategy_check.js", "web/js/strategy.js", "web/js/lessons.js", "web/vendor/chess.js").CombinedOutput(); err != nil {
+		t.Fatalf("strategy_check.js failed: %v\n%s", err, out)
 	}
 }
 

@@ -6,12 +6,23 @@ const snap = (d) => JSON.stringify(d);
 
 // 1. First load with existing progress: the first profile holds it, nothing lost.
 const legacy = { stars: { pieces1: 3, pieces2: 1 }, level: 42, color: 'b', best: 30, game: { moves: ['e4', 'e5'], hints: 1 } };
+// saved with the old limit of 3 (1 left = 2 used): the 2 used hints are kept under the new limit of 10
+const migrated = { ...legacy, game: { moves: ['e4', 'e5'], hints: 8, lim: 10 } };
+assert.strictEqual(P.HINTS_PER_GAME, 10);
 const doc = P.load(null, JSON.stringify(legacy));
 assert.strictEqual(doc.v, 2);
 assert.strictEqual(doc.profiles.length, 1);
 assert.strictEqual(doc.active, doc.profiles[0].id);
 assert.ok(/^p[a-z0-9]+$/.test(doc.profiles[0].id));
-assert.deepStrictEqual(doc.profiles[0].data, legacy);
+assert.deepStrictEqual(doc.profiles[0].data, migrated);
+// loading again does not use up more hints
+assert.deepStrictEqual(P.load(snap(doc), null).profiles[0].data, migrated);
+// an untouched old game keeps all 3 of its hints available (10 now), a used-up one stays used up (0 left)
+const oldGame = (h) => P.cleanData({ game: { moves: [], hints: h } }).game.hints;
+assert.deepStrictEqual([oldGame(3), oldGame(0), oldGame(undefined)], [10, 7, 10]);
+// a game saved with the new limit is taken as it is
+assert.strictEqual(P.cleanData({ game: { moves: [], hints: 9, lim: 10 } }).game.hints, 9);
+assert.strictEqual(P.cleanData({ game: { moves: [], hints: 99, lim: 10 } }).game.hints, 10);
 // a fresh browser gets one empty profile
 assert.deepStrictEqual(P.load(null, null).profiles[0].data, P.emptyData());
 // saved profiles win over the old key, and the id is stable across loads
@@ -24,7 +35,7 @@ const kid = P.add(doc, 'Kid', P.AVATARS[1]);
 kid.data.stars.rules1 = 2; kid.data.level = 5;
 const back = P.load(snap(doc), null);
 assert.strictEqual(back.profiles.length, 2);
-assert.deepStrictEqual(back.profiles[0].data, legacy);
+assert.deepStrictEqual(back.profiles[0].data, migrated);
 assert.strictEqual(back.profiles[1].data.level, 5);
 assert.deepStrictEqual(back.profiles[1].data.stars, { rules1: 2 });
 assert.strictEqual(back.profiles[1].data.game, null);
@@ -51,7 +62,7 @@ const got = P.importCode(other, code.replace(/(.{20})/g, '$1\n  ')); // whitespa
 assert.strictEqual(other.profiles.length, 2);
 assert.strictEqual(got.name, 'Zoë ♞');
 assert.strictEqual(got.avatar, src.avatar);
-assert.deepStrictEqual(got.data, legacy);
+assert.deepStrictEqual(got.data, migrated);
 assert.notStrictEqual(got.id, src.id);
 
 // 4. Bad imports are rejected with a message and change nothing.
@@ -71,6 +82,8 @@ const bad = [
   [mut((p) => { p.data.game = { moves: 'e4', hints: 1 }; }), /damaged/],
   [mut((p) => { p.data.game = { moves: [1], hints: 1 }; }), /damaged/],
   [mut((p) => { p.data.game = { moves: [], hints: 4 }; }), /damaged/],
+  [mut((p) => { p.data.game = { moves: [], hints: 11, lim: 10 }; }), /damaged/],
+  [mut((p) => { p.data.game = { moves: [], hints: -1, lim: 10 }; }), /damaged/],
   ['KS1.' + 'A'.repeat(70000), /too big/],
 ];
 for (const [text, re] of bad) {
@@ -88,7 +101,7 @@ assert.strictEqual(snap(full), fb);
 // 5. Corrupt saved data does not crash; it falls back to the old progress.
 for (const raw of ['{not json', '[]', '{"v":2,"profiles":[]}', '{"v":3,"profiles":[{"id":"a"}]}']) {
   const d = P.load(raw, JSON.stringify(legacy));
-  assert.deepStrictEqual(d.profiles[0].data, legacy);
+  assert.deepStrictEqual(d.profiles[0].data, migrated);
 }
 // ...and hostile values inside saved data are cleaned.
 const hostile = P.load(JSON.stringify({ v: 2, active: 'zzz', profiles: [{ id: 'a', name: '  ', avatar: 'x', data: { stars: { a: 99, 'b c': 1 }, level: 1000, color: 'q', game: { moves: [1] } } }] }), null);

@@ -535,10 +535,10 @@
   ];
   function tierOf(level) { for (var i = 0; i < TIERS.length; i++) if (level <= TIERS[i][0]) return TIERS[i]; return TIERS[TIERS.length - 1]; }
 
-  var MAX_HINTS = 3; // computer hints per game (lesson hints are not limited)
+  var MAX_HINTS = Profiles.HINTS_PER_GAME; // computer hints per game (lesson hints are not limited)
 
   var Play = {
-    board: null, game: null, color: 'w', level: 1, thinking: false, token: 0, started: false, hint: [], hintsLeft: 3, hintPending: false, lastMove: null, resultShown: false,
+    board: null, game: null, color: 'w', level: 1, thinking: false, token: 0, started: false, hint: [], hintNote: '', hintsLeft: MAX_HINTS, hintPending: false, lastMove: null, resultShown: false,
     init: function () {
       var self = this;
       this.board = new Board($('playBoard'), {
@@ -563,8 +563,8 @@
     /* (Re)load level, colour and the saved game from the active profile; also used when switching profiles. */
     restore: function () {
       var self = this;
-      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
-      this.level = Store.data.level; this.color = Store.data.color;
+      this.token++; this.thinking = false; this.hint = []; this.hintNote = ''; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
+      this.level =Store.data.level; this.color = Store.data.color;
       this.game = new Chess();
       var g = Store.data.game;
       if (g && Array.isArray(g.moves)) {
@@ -602,9 +602,9 @@
       this.color = c; Store.data.color = c; Store.save();
       this.newGame();
     },
-    persist: function () { Store.data.game = { moves: this.game.history(), hints: this.hintsLeft }; Store.save(); },
+    persist: function () { Store.data.game = { moves: this.game.history(), hints: this.hintsLeft, lim: MAX_HINTS }; Store.save(); },
     newGame: function () {
-      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
+      this.token++; this.thinking = false; this.hint = []; this.hintNote = ''; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
       this.game = new Chess();
       this.board.setOrientation(this.color);
       this.persist(); this.draw();
@@ -637,11 +637,11 @@
           this.resultShown = true;
           if (r.win && this.level > Store.data.best) { Store.data.best = this.level; Store.save(); }
         }
-      } else { res.className = 'p-fb'; res.textContent = ''; }
+      } else { res.className = 'p-fb' + (this.hintNote ? ' note' : ''); res.textContent = this.hintNote; }
       // buttons
       var plies = hist.length;
       $('playUndo').disabled = this.color === 'w' ? plies < 1 : plies < 2;
-      $('playHint').disabled = over || !mine || this.thinking || this.hintsLeft < 1;
+      $('playHint').disabled = over || !mine || this.thinking; // at 0 it stays pressable so it can explain the limit
       $('playHint').textContent = 'Hint (' + this.hintsLeft + ' left)';
       $('playHint').title = this.hintsLeft < 1 ? 'You used all ' + MAX_HINTS + ' hints in this game. Start a new game for more.' : '';
       // move list
@@ -673,7 +673,7 @@
     commit: function (from, to, promo) {
       var m = this.game.move({ from: from, to: to, promotion: promo });
       if (!m) { this.draw(); return; }
-      this.hint = []; this.persist();
+      this.hint = []; this.hintNote = ''; this.persist();
       if (this.game.game_over()) { this.draw({ from: from, to: to }); return; }
       this.thinking = true;
       this.draw({ from: from, to: to });
@@ -700,7 +700,7 @@
       });
     },
     undo: function () {
-      this.token++; this.hint = []; this.resultShown = false;
+      this.token++; this.hint = []; this.hintNote = ''; this.resultShown = false;
       var wasThinking = this.thinking; this.thinking = false;
       // take back until it is the player's turn again
       if (this.game.history().length) this.game.undo();
@@ -710,7 +710,8 @@
     },
     showHint: function () {
       var self = this, tok = this.token, fen = this.game.fen();
-      if (this.hintsLeft < 1 || this.hintPending) return;
+      if (this.hintPending) return;
+      if (this.hintsLeft < 1) { this.hint = []; this.hintNote = 'No hints left: you used all ' + MAX_HINTS + ' in this game. Start a new game for more.'; this.draw(); return; }
       this.hintPending = true;
       $('playHint').disabled = true;
       Engine.hint(fen).then(function (u) {
@@ -718,6 +719,7 @@
         if (tok !== self.token || self.game.fen() !== fen || !u) { self.draw(); return; }
         self.hintsLeft--; self.persist();
         self.hint = [u.slice(0, 2), u.slice(2, 4)];
+        self.hintNote = Strategy.describe(self.game, u, Lessons) || ''; // empty: plain best-move hint
         self.draw();
       }, function () { self.hintPending = false; self.draw(); });
     }

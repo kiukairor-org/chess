@@ -161,20 +161,28 @@ func TestPlayHintLimit(t *testing.T) {
 	}
 	js, page := get("/js/app.js"), get("/")
 	for _, want := range []string{
-		"var MAX_HINTS = 3;",
-		"hints: this.hintsLeft",                       // saved with the game in progress
-		"this.hintsLeft = g.hints;",                   // restored on resume
-		"this.hintsLeft = MAX_HINTS;",                 // reset by a new game
-		"this.thinking || this.hintsLeft < 1;",        // disabled at 0
-		"'Hint (' + this.hintsLeft + ' left)'",        // label
-		"if (this.hintsLeft < 1 || this.hintPending)", // showHint refuses at 0
+		"var MAX_HINTS = Profiles.HINTS_PER_GAME;",                   // the one named constant (10, see profiles.js)
+		"hints: this.hintsLeft, lim: MAX_HINTS",                      // saved with the game in progress, tagged with its limit
+		"this.hintsLeft = g.hints;",                                  // restored on resume
+		"this.hintsLeft = MAX_HINTS;",                                // reset by a new game
+		"'Hint (' + this.hintsLeft + ' left)'",                       // label
+		"if (this.hintsLeft < 1) {",                                  // showHint refuses at 0 and says why
+		"No hints left: you used all ' + MAX_HINTS + ' in this game", // the refusal message
 		"self.hintsLeft--;",
+		"Strategy.describe(self.game, u, Lessons) || ''", // strategy note, empty falls back to the plain hint
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("app.js lost %q", want)
 		}
 	}
-	if !strings.Contains(page, `id="playHint">Hint (3 left)</button>`) {
+	profiles := get("/js/profiles.js")
+	if !strings.Contains(profiles, "var HINTS_PER_GAME = 10,") {
+		t.Error("the hint limit is not 10")
+	}
+	if !strings.Contains(page, `<script src="js/strategy.js"></script>`) {
+		t.Error("page does not load strategy.js")
+	}
+	if !strings.Contains(page, `id="playHint">Hint (10 left)</button>`) {
 		t.Error("play hint button does not show the remaining hints")
 	}
 	if !strings.Contains(page, `id="lsnHint">Hint</button>`) || !strings.Contains(js, "$('lsnHint').disabled = this.solved;") {
