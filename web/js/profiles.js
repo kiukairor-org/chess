@@ -5,7 +5,7 @@
   var DOC_VERSION = 2;          // the saved document: { v, active, profiles: [{ id, name, avatar, data }] }
   var CODE_PREFIX = 'KS1.';     // export code: prefix + base64url(JSON)
   var FORMAT = 'knight-school-profile';
-  var MAX_PROFILES = 12, MAX_NAME = 20, MAX_CODE = 60000, MAX_MOVES = 1000;
+  var MAX_PROFILES = 12, MAX_NAME = 20, MAX_CODE = 60000, MAX_MOVES = 1000, MAX_HINTS = 10; // MAX_HINTS matches app.js
   var AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐙', '🦄', '🐢', '🚀', '⚽', '🌈'];
 
   function isObj(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
@@ -27,7 +27,9 @@
     out.best = int(d.best, 0, 100, 0);
     var g = d.game;
     if (isObj(g) && Array.isArray(g.moves) && g.moves.length <= MAX_MOVES && g.moves.every(function (m) { return typeof m === 'string' && m.length <= 10; })) {
-      out.game = { moves: g.moves.slice(), hints: int(g.hints, 0, 3, 3) };
+      out.game = { moves: g.moves.slice() };
+      if (g.used !== undefined) out.game.used = int(g.used, 0, MAX_HINTS, 0);
+      else out.game.hints = int(g.hints, 0, 3, 3); // saved before the limit went from 3 to 10
     }
     return out;
   }
@@ -43,7 +45,8 @@
     if (d.game !== null && d.game !== undefined) {
       var g = d.game;
       if (!isObj(g) || !Array.isArray(g.moves) || g.moves.length > MAX_MOVES || !g.moves.every(function (m) { return typeof m === 'string' && m.length <= 10; })) return 'The game in it is not valid.';
-      if (parseInt(g.hints, 10) !== g.hints || g.hints < 0 || g.hints > 3) return 'The game in it is not valid.';
+      var n = g.used !== undefined ? g.used : g.hints, hi = g.used !== undefined ? MAX_HINTS : 3;
+      if (parseInt(n, 10) !== n || n < 0 || n > hi) return 'The game in it is not valid.';
     }
     return '';
   }

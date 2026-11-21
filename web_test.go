@@ -161,20 +161,22 @@ func TestPlayHintLimit(t *testing.T) {
 	}
 	js, page := get("/js/app.js"), get("/")
 	for _, want := range []string{
-		"var MAX_HINTS = 3;",
-		"hints: this.hintsLeft",                       // saved with the game in progress
-		"this.hintsLeft = g.hints;",                   // restored on resume
-		"this.hintsLeft = MAX_HINTS;",                 // reset by a new game
-		"this.thinking || this.hintsLeft < 1;",        // disabled at 0
-		"'Hint (' + this.hintsLeft + ' left)'",        // label
-		"if (this.hintsLeft < 1 || this.hintPending)", // showHint refuses at 0
+		"var MAX_HINTS = 10;",
+		"used: MAX_HINTS - this.hintsLeft",                           // saved with the game in progress
+		"this.hintsLeft = MAX_HINTS - g.used;",                       // restored on resume
+		"this.hintsLeft = MAX_HINTS - (LEGACY_MAX_HINTS - g.hints);", // a game saved with the old limit of 3 keeps its used hints
+		"this.hintsLeft = MAX_HINTS;",                                // reset by a new game
+		"'Hint (' + this.hintsLeft + ' left)'",                       // label
+		"if (this.hintsLeft < 1) { this.hintNote = {",                // the 11th request is refused with a message
+		"'You used all ' + MAX_HINTS + ' hints in this game. Start a new game for more.'",
 		"self.hintsLeft--;",
+		"Hints.explain(Chess, fen, u, Lessons)", // the hint names a lesson strategy when one fits
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("app.js lost %q", want)
 		}
 	}
-	if !strings.Contains(page, `id="playHint">Hint (3 left)</button>`) {
+	if !strings.Contains(page, `id="playHint">Hint (10 left)</button>`) || !strings.Contains(page, `src="js/hints.js"`) {
 		t.Error("play hint button does not show the remaining hints")
 	}
 	if !strings.Contains(page, `id="lsnHint">Hint</button>`) || !strings.Contains(js, "$('lsnHint').disabled = this.solved;") {
