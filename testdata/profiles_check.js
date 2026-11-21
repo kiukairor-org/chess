@@ -18,6 +18,10 @@ assert.deepStrictEqual(P.load(null, null).profiles[0].data, P.emptyData());
 const again = P.load(snap(doc), JSON.stringify({ level: 7 }));
 assert.strictEqual(again.profiles[0].data.level, 42);
 assert.strictEqual(again.profiles[0].id, doc.profiles[0].id);
+// a game saved with the 10-hint limit keeps its used count (up to 10), the old `hints` form is still accepted
+const ten = P.load(null, JSON.stringify({ game: { moves: ['e4'], used: 7 } }));
+assert.deepStrictEqual(ten.profiles[0].data.game, { moves: ['e4'], used: 7 });
+assert.strictEqual(P.load(null, JSON.stringify({ game: { moves: [], used: 99 } })).profiles[0].data.game.used, 10);
 
 // 2. Two profiles keep separate progress and survive a save/load round trip.
 const kid = P.add(doc, 'Kid', P.AVATARS[1]);
@@ -71,6 +75,8 @@ const bad = [
   [mut((p) => { p.data.game = { moves: 'e4', hints: 1 }; }), /damaged/],
   [mut((p) => { p.data.game = { moves: [1], hints: 1 }; }), /damaged/],
   [mut((p) => { p.data.game = { moves: [], hints: 4 }; }), /damaged/],
+  [mut((p) => { p.data.game = { moves: [], used: 11 }; }), /damaged/],
+  [mut((p) => { p.data.game = { moves: [], used: -1 }; }), /damaged/],
   ['KS1.' + 'A'.repeat(70000), /too big/],
 ];
 for (const [text, re] of bad) {

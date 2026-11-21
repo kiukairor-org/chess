@@ -535,10 +535,11 @@
   ];
   function tierOf(level) { for (var i = 0; i < TIERS.length; i++) if (level <= TIERS[i][0]) return TIERS[i]; return TIERS[TIERS.length - 1]; }
 
-  var MAX_HINTS = 3; // computer hints per game (lesson hints are not limited)
+  var MAX_HINTS = 10; // computer hints per game (lesson hints are not limited)
+  var LEGACY_MAX_HINTS = 3; // games saved before the limit was raised stored `hints` left, out of 3
 
   var Play = {
-    board: null, game: null, color: 'w', level: 1, thinking: false, token: 0, started: false, hint: [], hintsLeft: 3, hintPending: false, lastMove: null, resultShown: false,
+    board: null, game: null, color: 'w', level: 1, thinking: false, token: 0, started: false, hint: [], hintsLeft: MAX_HINTS, hintNote: null, hintPending: false, lastMove: null, resultShown: false,
     init: function () {
       var self = this;
       this.board = new Board($('playBoard'), {
@@ -563,13 +564,14 @@
     /* (Re)load level, colour and the saved game from the active profile; also used when switching profiles. */
     restore: function () {
       var self = this;
-      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
+      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintNote = null; this.hintPending = false; this.lastMove = null; this.resultShown = false;
       this.level = Store.data.level; this.color = Store.data.color;
       this.game = new Chess();
       var g = Store.data.game;
       if (g && Array.isArray(g.moves)) {
         try { g.moves.forEach(function (san) { if (!self.game.move(san)) throw new Error('bad move'); }); } catch (e) { this.game = new Chess(); g = null; }
-        if (g && g.hints >= 0 && g.hints <= MAX_HINTS && g.hints === (g.hints | 0)) this.hintsLeft = g.hints;
+        if (g && g.used >= 0 && g.used <= MAX_HINTS && g.used === (g.used | 0)) this.hintsLeft = MAX_HINTS - g.used;
+        else if (g && g.hints >= 0 && g.hints <= LEGACY_MAX_HINTS && g.hints === (g.hints | 0)) this.hintsLeft = MAX_HINTS - (LEGACY_MAX_HINTS - g.hints); // old save: hints already used stay used
       }
       this.board.setOrientation(this.color);
       this.levelUi();
@@ -602,9 +604,9 @@
       this.color = c; Store.data.color = c; Store.save();
       this.newGame();
     },
-    persist: function () { Store.data.game = { moves: this.game.history(), hints: this.hintsLeft }; Store.save(); },
+    persist: function () { Store.data.game = { moves: this.game.history(), used: MAX_HINTS - this.hintsLeft }; Store.save(); },
     newGame: function () {
-      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintPending = false; this.lastMove = null; this.resultShown = false;
+      this.token++; this.thinking = false; this.hint = []; this.hintsLeft = MAX_HINTS; this.hintNote = null; this.hintPending = false; this.lastMove = null; this.resultShown = false;
       this.game = new Chess();
       this.board.setOrientation(this.color);
       this.persist(); this.draw();
@@ -620,6 +622,7 @@
       var sub = 'You play ' + (this.color === 'w' ? 'White' : 'Black') + ' against level ' + this.level;
       var head = over ? 'Game over' : (this.thinking || !mine ? 'The computer is thinking…' : (g.in_check() ? 'Check! Your move' : 'Your move'));
       if (!over && this.hintsLeft < 1) sub += '. No hints left in this game';
+      if (this.hintNote && this.hintNote.fen !== g.fen()) this.hintNote = null; // a note belongs to one position
       st.textContent = head; st.appendChild(el('small', null, sub));
       // result
       var res = $('playResult');
@@ -637,11 +640,12 @@
           this.resultShown = true;
           if (r.win && this.level > Store.data.best) { Store.data.best = this.level; Store.save(); }
         }
-      } else { res.className = 'p-fb'; res.textContent = ''; }
+      } else if (this.hintNote) { res.className = 'p-fb note'; res.textContent = this.hintNote.text; }
+      else { res.className = 'p-fb'; res.textContent = ''; }
       // buttons
       var plies = hist.length;
       $('playUndo').disabled = this.color === 'w' ? plies < 1 : plies < 2;
-      $('playHint').disabled = over || !mine || this.thinking || this.hintsLeft < 1;
+      $('playHint').disabled = over || !mine || this.thinking;
       $('playHint').textContent = 'Hint (' + this.hintsLeft + ' left)';
       $('playHint').title = this.hintsLeft < 1 ? 'You used all ' + MAX_HINTS + ' hints in this game. Start a new game for more.' : '';
       // move list
@@ -710,7 +714,8 @@
     },
     showHint: function () {
       var self = this, tok = this.token, fen = this.game.fen();
-      if (this.hintsLeft < 1 || this.hintPending) return;
+      if (this.hintPending) return;
+      if (this.hintsLeft < 1) { this.hintNote = { fen: fen, text: 'You used all ' + MAX_HINTS + ' hints in this game. Start a new game for more.' }; this.draw(); return; }
       this.hintPending = true;
       $('playHint').disabled = true;
       Engine.hint(fen).then(function (u) {
@@ -718,6 +723,8 @@
         if (tok !== self.token || self.game.fen() !== fen || !u) { self.draw(); return; }
         self.hintsLeft--; self.persist();
         self.hint = [u.slice(0, 2), u.slice(2, 4)];
+        var why = Hints.explain(Chess, fen, u, Lessons);
+        self.hintNote = why ? { fen: fen, text: why.text } : null; // no lesson idea fits: just the highlighted move
         self.draw();
       }, function () { self.hintPending = false; self.draw(); });
     }
